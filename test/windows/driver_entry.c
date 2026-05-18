@@ -1,388 +1,402 @@
 /**
  * @file driver_entry.c
- * @brief Точка входа драйвера и встроенный тестовый стенд.
+ * @brief РўРѕС‡РєР° РІС…РѕРґР° РґСЂР°Р№РІРµСЂР° Windows Рё РІСЃС‚СЂРѕРµРЅРЅС‹Р№ С‚РµСЃС‚РѕРІС‹Р№ СЃС‚РµРЅРґ.
  *
  * @details
- * Демонстрирует использование API KernelSocket для создания TCP и UDP серверов
- * и клиентов в режиме ядра. Реализует 4 независимых системных потока для
- * параллельного тестирования протоколов. Поддерживает мягкую выгрузку
- * через паттерн "Loopback Wake-up".
+ * Р”РµРјРѕРЅСЃС‚СЂРёСЂСѓРµС‚ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ API KernelSocket РґР»СЏ СЃРѕР·РґР°РЅРёСЏ TCP Рё UDP СЃРµСЂРІРµСЂРѕРІ
+ * Рё РєР»РёРµРЅС‚РѕРІ РІ СЂРµР¶РёРјРµ СЏРґСЂР°. Р РµР°Р»РёР·СѓРµС‚ 4 РЅРµР·Р°РІРёСЃРёРјС‹С… СЃРёСЃС‚РµРјРЅС‹С… РїРѕС‚РѕРєР° РґР»СЏ
+ * РїР°СЂР°Р»Р»РµР»СЊРЅРѕРіРѕ С‚РµСЃС‚РёСЂРѕРІР°РЅРёСЏ РїСЂРѕС‚РѕРєРѕР»РѕРІ. РџРѕРґРґРµСЂР¶РёРІР°РµС‚ Р±РµР·РѕРїР°СЃРЅСѓСЋ РјСЏРіРєСѓСЋ РІС‹РіСЂСѓР·РєСѓ
+ * С‡РµСЂРµР· Р°СЂС…РёС‚РµРєС‚СѓСЂРЅС‹Р№ РїР°С‚С‚РµСЂРЅ "Loopback Wake-up".
  */
 
 #include <ntddk.h>
 #include <ntstrsafe.h>
-#include "ks_windows_internal.h"
+#include "../../src/windows/ks_windows_internal.h"
 #include "../../include/ks_api.h"
 
 /* =========================================================================
- * [НАСТРОЙКИ ТЕСТОВОГО СТЕНДА]
- * Изменяйте эти параметры для переключения между сценариями тестирования.
+ * [РќРђРЎРўР РћР™РљР РўР•РЎРўРћР’РћР“Рћ РЎРўР•РќР”Рђ]
+ * РР·РјРµРЅСЏР№С‚Рµ СЌС‚Рё РїР°СЂР°РјРµС‚СЂС‹ РґР»СЏ РїРµСЂРµРєР»СЋС‡РµРЅРёСЏ РјРµР¶РґСѓ СЃС†РµРЅР°СЂРёСЏРјРё С‚РµСЃС‚РёСЂРѕРІР°РЅРёСЏ.
  * ========================================================================= */
 
-/** @brief Локальный порт для TCP-сервера и целевой порт для TCP-клиента */
+/** @brief Р›РѕРєР°Р»СЊРЅС‹Р№ РїРѕСЂС‚ РґР»СЏ TCP-СЃРµСЂРІРµСЂР° Рё С†РµР»РµРІРѕР№ РїРѕСЂС‚ РґР»СЏ TCP-РєР»РёРµРЅС‚Р°. */
 #define TEST_PORT_TCP 9000
 
-/** @brief Локальный порт для UDP-сервера и целевой порт для UDP-клиента */
+/** @brief Р›РѕРєР°Р»СЊРЅС‹Р№ РїРѕСЂС‚ РґР»СЏ UDP-СЃРµСЂРІРµСЂР° Рё С†РµР»РµРІРѕР№ РїРѕСЂС‚ РґР»СЏ UDP-РєР»РёРµРЅС‚Р°. */
 #define TEST_PORT_UDP 9001
 
 /**
- * @brief IP-адрес целевого узла (куда стучатся клиенты).
+ * @brief IP-Р°РґСЂРµСЃ С†РµР»РµРІРѕРіРѕ СѓР·Р»Р° (РєСѓРґР° СЃС‚СѓС‡Р°С‚СЃСЏ РєР»РёРµРЅС‚С‹).
  *
  * @note
- * - Для локального теста (Kernel->Kernel на одной машине): "127.0.0.1"
- * - Для сетевого теста (Win->Linux): IP-адрес Linux-машины (например, "26.175.255.229")
+ * - Р”Р»СЏ Р»РѕРєР°Р»СЊРЅРѕРіРѕ С‚РµСЃС‚Р° (Kernel->Kernel РЅР° РѕРґРЅРѕР№ РјР°С€РёРЅРµ): "127.0.0.1"
+ * - Р”Р»СЏ СЃРµС‚РµРІРѕРіРѕ С‚РµСЃС‚Р° (Win->Linux): IP-Р°РґСЂРµСЃ Linux-РјР°С€РёРЅС‹ (РЅР°РїСЂРёРјРµСЂ, "26.175.255.229")
  */
-#define TARGET_IP "26.217.126.117"
+#define TARGET_IP "x.x.x.x"
 
 /* ========================================================================= */
 
-/** @brief Глобальный флаг для безопасной остановки всех потоков при выгрузке */
+/** @brief Р“Р»РѕР±Р°Р»СЊРЅС‹Р№ С„Р»Р°Рі РґР»СЏ Р±РµР·РѕРїР°СЃРЅРѕР№ РѕСЃС‚Р°РЅРѕРІРєРё Р±Р»РѕРєРёСЂСѓСЋС‰РёС… РїРѕС‚РѕРєРѕРІ РїСЂРё РІС‹РіСЂСѓР·РєРµ РґСЂР°Р№РІРµСЂР°. */
 BOOLEAN g_IsUnloading = FALSE;
 
 
 /**
- * @brief Форматированный вывод логов в отладчик (DebugView/WinDbg).
+ * @brief Р¤РѕСЂРјР°С‚РёСЂРѕРІР°РЅРЅС‹Р№ РІС‹РІРѕРґ Р»РѕРіРѕРІ РІ РѕС‚Р»Р°РґС‡РёРє (DebugView/WinDbg).
  *
- * @param Tag Строковый тег подсистемы (например, "TCP-СЕРВЕР").
- * @param Format Строка формата (printf-style).
- * @param ... Аргументы для форматирования.
+ * @param[in] Tag    РЎС‚СЂРѕРєРѕРІС‹Р№ С‚РµРі РїРѕРґСЃРёСЃС‚РµРјС‹ (РЅР°РїСЂРёРјРµСЂ, "TCP-РЎР•Р Р’Р•Р ").
+ * @param[in] Format РЎС‚СЂРѕРєР° С„РѕСЂРјР°С‚Р° (printf-style).
+ * @param[in] ...    Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹Рµ Р°СЂРіСѓРјРµРЅС‚С‹ РґР»СЏ С„РѕСЂРјР°С‚РёСЂРѕРІР°РЅРёСЏ.
  */
 static void KsLog(const char* Tag, const char* Format, ...) {
-    LARGE_INTEGER SysTime, LocalTime;
-    TIME_FIELDS TimeFields;
-    char MessageBuffer[256];
-    va_list Args;
+	LARGE_INTEGER SysTime, LocalTime;
+	TIME_FIELDS TimeFields;
+	char MessageBuffer[256];
+	va_list Args;
 
-    KeQuerySystemTime(&SysTime);
-    ExSystemTimeToLocalTime(&SysTime, &LocalTime);
-    RtlTimeToTimeFields(&LocalTime, &TimeFields);
+	KeQuerySystemTime(&SysTime);
+	ExSystemTimeToLocalTime(&SysTime, &LocalTime);
+	RtlTimeToTimeFields(&LocalTime, &TimeFields);
 
-    va_start(Args, Format);
-    RtlStringCbVPrintfA(MessageBuffer, sizeof(MessageBuffer), Format, Args);
-    va_end(Args);
+	va_start(Args, Format);
+	RtlStringCbVPrintfA(MessageBuffer, sizeof(MessageBuffer), Format, Args);
+	va_end(Args);
 
-    DbgPrint("[KS-LOG] [%02hd:%02hd:%02hd] [%s] %s\n",
-        TimeFields.Hour, TimeFields.Minute, TimeFields.Second, Tag, MessageBuffer);
+	DbgPrint("[KS-LOG] [%02hd:%02hd:%02hd] [%s] %s\n",
+		TimeFields.Hour, TimeFields.Minute, TimeFields.Second, Tag, MessageBuffer);
 }
 
 /**
- * @brief Получение текущего локального времени в виде строки.
+ * @brief РџРѕР»СѓС‡РµРЅРёРµ С‚РµРєСѓС‰РµРіРѕ Р»РѕРєР°Р»СЊРЅРѕРіРѕ РІСЂРµРјРµРЅРё РІ РІРёРґРµ СЃС‚СЂРѕРєРё.
  *
- * @param Buffer Указатель на буфер для записи (формат: ЧЧ:ММ:СС).
- * @param BufferSize Размер буфера.
+ * @param[out] Buffer     РЈРєР°Р·Р°С‚РµР»СЊ РЅР° Р±СѓС„РµСЂ РґР»СЏ Р·Р°РїРёСЃРё (С„РѕСЂРјР°С‚: Р§Р§:РњРњ:РЎРЎ).
+ * @param[in]  BufferSize Р Р°Р·РјРµСЂ РїСЂРµРґРѕСЃС‚Р°РІР»РµРЅРЅРѕРіРѕ Р±СѓС„РµСЂР°.
  */
 static void GetTimeStr(char* Buffer, size_t BufferSize) {
-    LARGE_INTEGER SysTime, LocalTime;
-    TIME_FIELDS TimeFields;
+	LARGE_INTEGER SysTime, LocalTime;
+	TIME_FIELDS TimeFields;
 
-    KeQuerySystemTime(&SysTime);
-    ExSystemTimeToLocalTime(&SysTime, &LocalTime);
-    RtlTimeToTimeFields(&LocalTime, &TimeFields);
+	KeQuerySystemTime(&SysTime);
+	ExSystemTimeToLocalTime(&SysTime, &LocalTime);
+	RtlTimeToTimeFields(&LocalTime, &TimeFields);
 
-    RtlStringCbPrintfA(Buffer, BufferSize, "%02hd:%02hd:%02hd",
-        TimeFields.Hour, TimeFields.Minute, TimeFields.Second);
+	RtlStringCbPrintfA(Buffer, BufferSize, "%02hd:%02hd:%02hd",
+		TimeFields.Hour, TimeFields.Minute, TimeFields.Second);
 }
 
 /**
- * @brief Системный поток: Ядерный TCP-Сервер.
- * @details Надежный обмен. Принимает подключение, читает данные, отправляет квитанцию (ACK).
+ * @brief РЎРёСЃС‚РµРјРЅС‹Р№ РїРѕС‚РѕРє: РЇРґРµСЂРЅС‹Р№ TCP-РЎРµСЂРІРµСЂ.
+ * 
+ * @details Р”РµРјРѕРЅСЃС‚СЂРёСЂСѓРµС‚ РЅР°РґРµР¶РЅС‹Р№ РѕР±РјРµРЅ. РџСЂРёРЅРёРјР°РµС‚ РїРѕРґРєР»СЋС‡РµРЅРёРµ, С‡РёС‚Р°РµС‚ РґР°РЅРЅС‹Рµ, 
+ * РѕС‚РїСЂР°РІР»СЏРµС‚ РєР»РёРµРЅС‚Сѓ РєРІРёС‚Р°РЅС†РёСЋ (ACK) Рё РєРѕСЂСЂРµРєС‚РЅРѕ Р·Р°РєСЂС‹РІР°РµС‚ СЃРѕРµРґРёРЅРµРЅРёРµ.
  *
- * @param Context Не используется.
+ * @param[in] Context РџРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёР№ РєРѕРЅС‚РµРєСЃС‚ (РѕР¶РёРґР°РµС‚СЃСЏ NULL, РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ).
  */
 static void TcpServerThread(PVOID Context) {
-    KS_SOCKET* ServerSock;
-    KS_SOCKET* ClientSock;
-    char ClientIp[16] = { 0 };
-    unsigned short ClientPort = 0;
-    char Buffer[256] = { 0 };
-    char ReplyMsg[256] = { 0 };
-    char TimeStr[16] = { 0 };
-    int Bytes;
+	KS_SOCKET* ServerSock;
+	KS_SOCKET* ClientSock;
+	char ClientIp[16] = { 0 };
+	unsigned short ClientPort = 0;
+	char Buffer[256] = { 0 };
+	char ReplyMsg[256] = { 0 };
+	char TimeStr[16] = { 0 };
+	int Bytes;
 
-    UNREFERENCED_PARAMETER(Context);
+	UNREFERENCED_PARAMETER(Context);
 
-    KsLog("TCP-СЕРВЕР", "Ожидание подключений на порту %d...", TEST_PORT_TCP);
+	KsLog("TCP-РЎР•Р Р’Р•Р ", "РћР¶РёРґР°РЅРёРµ РїРѕРґРєР»СЋС‡РµРЅРёР№ РЅР° РїРѕСЂС‚Сѓ %d...", TEST_PORT_TCP);
 
-    ServerSock = ksSocket(KS_TCP);
-    if (!ServerSock) PsTerminateSystemThread(STATUS_SUCCESS);
+	ServerSock = ksSocket(KS_TCP);
+	if (!ServerSock) PsTerminateSystemThread(STATUS_SUCCESS);
 
-    if (ksBind(ServerSock, "0.0.0.0", TEST_PORT_TCP) != KS_OK || ksListen(ServerSock, 1) != KS_OK) {
-        KsLog("TCP-ОШИБКА", "Порт %d занят или сбой ksListen!", TEST_PORT_TCP);
-        ksClose(ServerSock);
-        PsTerminateSystemThread(STATUS_SUCCESS);
-    }
+	if (ksBind(ServerSock, "0.0.0.0", TEST_PORT_TCP) != KS_OK || ksListen(ServerSock, 1) != KS_OK) {
+		KsLog("TCP-РћРЁРР‘РљРђ", "РџРѕСЂС‚ %d Р·Р°РЅСЏС‚ РёР»Рё СЃР±РѕР№ ksListen!", TEST_PORT_TCP);
+		ksClose(ServerSock);
+		PsTerminateSystemThread(STATUS_SUCCESS);
+	}
 
-    while (!g_IsUnloading) {
-        if (ksAccept(ServerSock, &ClientSock, ClientIp, &ClientPort) == KS_OK) {
+	while (!g_IsUnloading) {
+		if (ksAccept(ServerSock, &ClientSock, ClientIp, &ClientPort) == KS_OK) {
 
-            /* Мгновенный выход, если поток был разбужен для выгрузки драйвера */
-            if (g_IsUnloading) { ksClose(ClientSock); break; }
+			/* РњРіРЅРѕРІРµРЅРЅС‹Р№ РІС‹С…РѕРґ, РµСЃР»Рё РїРѕС‚РѕРє Р±С‹Р» СЂР°Р·Р±СѓР¶РµРЅ РґР»СЏ РІС‹РіСЂСѓР·РєРё РґСЂР°Р№РІРµСЂР° */
+			if (g_IsUnloading) { ksClose(ClientSock); break; }
 
-            KsLog("TCP-СЕРВЕР", "Подключение от %s:%d", ClientIp, ClientPort);
+			KsLog("TCP-РЎР•Р Р’Р•Р ", "РџРѕРґРєР»СЋС‡РµРЅРёРµ РѕС‚ %s:%d", ClientIp, ClientPort);
 
-            Bytes = ksRecv(ClientSock, Buffer, sizeof(Buffer) - 1);
-            if (Bytes > 0) {
-                Buffer[Bytes] = '\0';
-                KsLog("TCP-СЕРВЕР", "Получено: '%s'", Buffer);
+			Bytes = ksRecv(ClientSock, Buffer, sizeof(Buffer) - 1);
+			if (Bytes > 0) {
+				Buffer[Bytes] = '\0';
+				KsLog("TCP-РЎР•Р Р’Р•Р ", "РџРѕР»СѓС‡РµРЅРѕ: '%s'", Buffer);
 
-                GetTimeStr(TimeStr, sizeof(TimeStr));
-                RtlStringCbPrintfA(ReplyMsg, sizeof(ReplyMsg),
-                    "ACK [Time: %s | Bytes received: %d]", TimeStr, Bytes);
+				GetTimeStr(TimeStr, sizeof(TimeStr));
+				RtlStringCbPrintfA(ReplyMsg, sizeof(ReplyMsg),
+					"ACK [Time: %s | Bytes received: %d]", TimeStr, Bytes);
 
-                ksSend(ClientSock, ReplyMsg, (unsigned int)strlen(ReplyMsg) + 1);
-                KsLog("TCP-СЕРВЕР", "Отправлена квитанция: %s", ReplyMsg);
+				ksSend(ClientSock, ReplyMsg, (unsigned int)strlen(ReplyMsg) + 1);
+				KsLog("TCP-РЎР•Р Р’Р•Р ", "РћС‚РїСЂР°РІР»РµРЅР° РєРІРёС‚Р°РЅС†РёСЏ: %s", ReplyMsg);
 
-                /* Задержка (2 сек) для предотвращения Race Condition (TCP RST) при закрытии */
-                LARGE_INTEGER Delay;
-                Delay.QuadPart = -20000000LL;
-                KeDelayExecutionThread(KernelMode, FALSE, &Delay);
-            }
-            ksClose(ClientSock);
-        }
-        else {
-            break; /* Выход при ошибке или прерывании */
-        }
-    }
+				/* Р—Р°РґРµСЂР¶РєР° (2 СЃРµРє) РґР»СЏ РїСЂРµРґРѕС‚РІСЂР°С‰РµРЅРёСЏ Race Condition (TCP RST) РїСЂРё Р·Р°РєСЂС‹С‚РёРё */
+				LARGE_INTEGER Delay;
+				Delay.QuadPart = -20000000LL;
+				KeDelayExecutionThread(KernelMode, FALSE, &Delay);
+			}
+			ksClose(ClientSock);
+		}
+		else {
+			break; /* Р’С‹С…РѕРґ РїСЂРё РѕС€РёР±РєРµ РёР»Рё РїСЂРµСЂС‹РІР°РЅРёРё */
+		}
+	}
 
-    ksClose(ServerSock);
-    KsLog("TCP-СЕРВЕР", "Успешно остановлен.");
-    PsTerminateSystemThread(STATUS_SUCCESS);
+	ksClose(ServerSock);
+	KsLog("TCP-РЎР•Р Р’Р•Р ", "РЈСЃРїРµС€РЅРѕ РѕСЃС‚Р°РЅРѕРІР»РµРЅ.");
+	PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
 /**
- * @brief Системный поток: Ядерный TCP-Клиент.
- * @details Генерирует N подключений к серверу, отправляет данные и ждет квитанцию.
+ * @brief РЎРёСЃС‚РµРјРЅС‹Р№ РїРѕС‚РѕРє: РЇРґРµСЂРЅС‹Р№ TCP-РљР»РёРµРЅС‚.
+ * 
+ * @details Р“РµРЅРµСЂРёСЂСѓРµС‚ N РїРѕРґРєР»СЋС‡РµРЅРёР№ Рє СЃРµСЂРІРµСЂСѓ, РѕС‚РїСЂР°РІР»СЏРµС‚ РґР°РЅРЅС‹Рµ Рё Р¶РґРµС‚ РєРІРёС‚Р°РЅС†РёСЋ.
  *
- * @param Context Не используется.
+ * @param[in] Context РџРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёР№ РєРѕРЅС‚РµРєСЃС‚ (РѕР¶РёРґР°РµС‚СЃСЏ NULL, РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ).
  */
 static void TcpClientThread(PVOID Context) {
-    KS_SOCKET* ClientSock;
-    LARGE_INTEGER Timeout, Tick;
-    char Msg[256] = { 0 };
-    char Reply[256] = { 0 };
-    char TimeStr[16] = { 0 };
-    int Bytes, N;
+	KS_SOCKET* ClientSock;
+	LARGE_INTEGER Timeout, Tick;
+	char Msg[256] = { 0 };
+	char Reply[256] = { 0 };
+	char TimeStr[16] = { 0 };
+	int Bytes, N;
 
-    UNREFERENCED_PARAMETER(Context);
+	UNREFERENCED_PARAMETER(Context);
 
-    /* Задержка 5 сек перед стартом клиента, чтобы серверы успели запуститься */
-    Timeout.QuadPart = -50000000LL;
-    KeDelayExecutionThread(KernelMode, FALSE, &Timeout);
+	/* Р—Р°РґРµСЂР¶РєР° 5 СЃРµРє РїРµСЂРµРґ СЃС‚Р°СЂС‚РѕРј РєР»РёРµРЅС‚Р°, С‡С‚РѕР±С‹ СЃРµСЂРІРµСЂС‹ СѓСЃРїРµР»Рё Р·Р°РїСѓСЃС‚РёС‚СЊСЃСЏ */
+	Timeout.QuadPart = -50000000LL;
+	KeDelayExecutionThread(KernelMode, FALSE, &Timeout);
 
-    /* Случайное число пакетов от 3 до 7 на основе системных тиков */
-    KeQueryTickCount(&Tick);
-    N = 3 + (Tick.LowPart % 5);
+	/* РЎР»СѓС‡Р°Р№РЅРѕРµ С‡РёСЃР»Рѕ РїР°РєРµС‚РѕРІ РѕС‚ 3 РґРѕ 7 РЅР° РѕСЃРЅРѕРІРµ СЃРёСЃС‚РµРјРЅС‹С… С‚РёРєРѕРІ */
+	KeQueryTickCount(&Tick);
+	N = 3 + (Tick.LowPart % 5);
 
-    KsLog("TCP-КЛИЕНТ", "Запуск! Будет отправлено %d пакетов на %s:%d", N, TARGET_IP, TEST_PORT_TCP);
+	KsLog("TCP-РљР›РР•РќРў", "Р—Р°РїСѓСЃРє! Р‘СѓРґРµС‚ РѕС‚РїСЂР°РІР»РµРЅРѕ %d РїР°РєРµС‚РѕРІ РЅР° %s:%d", N, TARGET_IP, TEST_PORT_TCP);
 
-    for (int i = 1; i <= N; i++) {
-        if (g_IsUnloading) break;
+	for (int i = 1; i <= N; i++) {
+		if (g_IsUnloading) break;
 
-        ClientSock = ksSocket(KS_TCP);
-        if (!ClientSock) break;
+		ClientSock = ksSocket(KS_TCP);
+		if (!ClientSock) break;
 
-        if (ksConnect(ClientSock, TARGET_IP, TEST_PORT_TCP) == KS_OK) {
-            GetTimeStr(TimeStr, sizeof(TimeStr));
-            RtlStringCbPrintfA(Msg, sizeof(Msg), "[Packet %d/%d | Time: %s] TCP Test from Windows", i, N, TimeStr);
+		if (ksConnect(ClientSock, TARGET_IP, TEST_PORT_TCP) == KS_OK) {
+			GetTimeStr(TimeStr, sizeof(TimeStr));
+			RtlStringCbPrintfA(Msg, sizeof(Msg), "[Packet %d/%d | Time: %s] TCP Test from Windows", i, N, TimeStr);
 
-            ksSend(ClientSock, Msg, (unsigned int)strlen(Msg) + 1);
-            KsLog("TCP-КЛИЕНТ", "Отправлено [%d/%d]: '%s'", i, N, Msg);
+			ksSend(ClientSock, Msg, (unsigned int)strlen(Msg) + 1);
+			KsLog("TCP-РљР›РР•РќРў", "РћС‚РїСЂР°РІР»РµРЅРѕ [%d/%d]: '%s'", i, N, Msg);
 
-            Bytes = ksRecv(ClientSock, Reply, sizeof(Reply) - 1);
-            if (Bytes > 0) {
-                Reply[Bytes] = '\0';
-                KsLog("TCP-КЛИЕНТ", "Ответ узла: '%s'", Reply);
-            }
-        }
-        else {
-            KsLog("TCP-ОШИБКА", "Сбой подключения к %s:%d", TARGET_IP, TEST_PORT_TCP);
-        }
-        ksClose(ClientSock);
+			Bytes = ksRecv(ClientSock, Reply, sizeof(Reply) - 1);
+			if (Bytes > 0) {
+				Reply[Bytes] = '\0';
+				KsLog("TCP-РљР›РР•РќРў", "РћС‚РІРµС‚ СѓР·Р»Р°: '%s'", Reply);
+			}
+		}
+		else {
+			KsLog("TCP-РћРЁРР‘РљРђ", "РЎР±РѕР№ РїРѕРґРєР»СЋС‡РµРЅРёСЏ Рє %s:%d", TARGET_IP, TEST_PORT_TCP);
+		}
+		ksClose(ClientSock);
 
-        /* Пауза 4 секунды между отправками пакетов */
-        Timeout.QuadPart = -40000000LL;
-        KeDelayExecutionThread(KernelMode, FALSE, &Timeout);
-    }
+		/* РџР°СѓР·Р° 4 СЃРµРєСѓРЅРґС‹ РјРµР¶РґСѓ РѕС‚РїСЂР°РІРєР°РјРё РїР°РєРµС‚РѕРІ */
+		Timeout.QuadPart = -40000000LL;
+		KeDelayExecutionThread(KernelMode, FALSE, &Timeout);
+	}
 
-    KsLog("TCP-КЛИЕНТ", "Тестирование завершено.");
-    PsTerminateSystemThread(STATUS_SUCCESS);
+	KsLog("TCP-РљР›РР•РќРў", "РўРµСЃС‚РёСЂРѕРІР°РЅРёРµ Р·Р°РІРµСЂС€РµРЅРѕ.");
+	PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
 /**
- * @brief Системный поток: Ядерный UDP-Сервер.
- * @details Демонстрирует односторонний прием (Fire-and-Forget). Просто логирует датаграммы.
+ * @brief РЎРёСЃС‚РµРјРЅС‹Р№ РїРѕС‚РѕРє: РЇРґРµСЂРЅС‹Р№ UDP-РЎРµСЂРІРµСЂ.
+ * 
+ * @details Р”РµРјРѕРЅСЃС‚СЂРёСЂСѓРµС‚ РѕРґРЅРѕСЃС‚РѕСЂРѕРЅРЅРёР№ РїСЂРёРµРј (Fire-and-Forget). РџСЂРѕСЃС‚Рѕ Р»РѕРіРёСЂСѓРµС‚ 
+ * РїРѕР»СѓС‡РµРЅРЅС‹Рµ РґР°С‚Р°РіСЂР°РјРјС‹ Р±РµР· РѕС‚РїСЂР°РІРєРё РѕС‚РІРµС‚Р°.
  *
- * @param Context Не используется.
+ * @param[in] Context РџРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёР№ РєРѕРЅС‚РµРєСЃС‚ (РѕР¶РёРґР°РµС‚СЃСЏ NULL, РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ).
  */
 static void UdpServerThread(PVOID Context) {
-    KS_SOCKET* ServerSock;
-    char ClientIp[16] = { 0 };
-    unsigned short ClientPort = 0;
-    char Buffer[256] = { 0 };
-    int Bytes;
+	KS_SOCKET* ServerSock;
+	char ClientIp[16] = { 0 };
+	unsigned short ClientPort = 0;
+	char Buffer[256] = { 0 };
+	int Bytes;
 
-    UNREFERENCED_PARAMETER(Context);
+	UNREFERENCED_PARAMETER(Context);
 
-    KsLog("UDP-СЕРВЕР", "Ожидание датаграмм на порту %d...", TEST_PORT_UDP);
+	KsLog("UDP-РЎР•Р Р’Р•Р ", "РћР¶РёРґР°РЅРёРµ РґР°С‚Р°РіСЂР°РјРј РЅР° РїРѕСЂС‚Сѓ %d...", TEST_PORT_UDP);
 
-    ServerSock = ksSocket(KS_UDP);
-    if (!ServerSock) PsTerminateSystemThread(STATUS_SUCCESS);
+	ServerSock = ksSocket(KS_UDP);
+	if (!ServerSock) PsTerminateSystemThread(STATUS_SUCCESS);
 
-    if (ksBind(ServerSock, "0.0.0.0", TEST_PORT_UDP) != KS_OK) {
-        KsLog("UDP-ОШИБКА", "Порт %d занят!", TEST_PORT_UDP);
-        ksClose(ServerSock);
-        PsTerminateSystemThread(STATUS_SUCCESS);
-    }
+	if (ksBind(ServerSock, "0.0.0.0", TEST_PORT_UDP) != KS_OK) {
+		KsLog("UDP-РћРЁРР‘РљРђ", "РџРѕСЂС‚ %d Р·Р°РЅСЏС‚!", TEST_PORT_UDP);
+		ksClose(ServerSock);
+		PsTerminateSystemThread(STATUS_SUCCESS);
+	}
 
-    while (!g_IsUnloading) {
-        Bytes = ksRecvFrom(ServerSock, Buffer, sizeof(Buffer) - 1, ClientIp, &ClientPort);
-        if (Bytes > 0) {
-            if (g_IsUnloading) break;
+	while (!g_IsUnloading) {
+		Bytes = ksRecvFrom(ServerSock, Buffer, sizeof(Buffer) - 1, ClientIp, &ClientPort);
+		if (Bytes > 0) {
+			if (g_IsUnloading) break;
 
-            Buffer[Bytes] = '\0';
-            KsLog("UDP-СЕРВЕР", "Получено от %s:%d: '%s'", ClientIp, ClientPort, Buffer);
+			Buffer[Bytes] = '\0';
+			KsLog("UDP-РЎР•Р Р’Р•Р ", "РџРѕР»СѓС‡РµРЅРѕ РѕС‚ %s:%d: '%s'", ClientIp, ClientPort, Buffer);
 
-            /* UDP - протокол без гарантии доставки. Сервер только принимает. */
-        }
-        else {
-            break;
-        }
-    }
+			/* UDP - РїСЂРѕС‚РѕРєРѕР» Р±РµР· РіР°СЂР°РЅС‚РёРё РґРѕСЃС‚Р°РІРєРё. РЎРµСЂРІРµСЂ С‚РѕР»СЊРєРѕ РїСЂРёРЅРёРјР°РµС‚. */
+		}
+		else {
+			break;
+		}
+	}
 
-    ksClose(ServerSock);
-    KsLog("UDP-СЕРВЕР", "Успешно остановлен.");
-    PsTerminateSystemThread(STATUS_SUCCESS);
+	ksClose(ServerSock);
+	KsLog("UDP-РЎР•Р Р’Р•Р ", "РЈСЃРїРµС€РЅРѕ РѕСЃС‚Р°РЅРѕРІР»РµРЅ.");
+	PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
 /**
- * @brief Системный поток: Ядерный UDP-Клиент.
- * @details Демонстрирует UDP-стриминг. Отправляет N датаграмм без ожидания квитанций.
+ * @brief РЎРёСЃС‚РµРјРЅС‹Р№ РїРѕС‚РѕРє: РЇРґРµСЂРЅС‹Р№ UDP-РљР»РёРµРЅС‚.
+ * 
+ * @details Р”РµРјРѕРЅСЃС‚СЂРёСЂСѓРµС‚ UDP-СЃС‚СЂРёРјРёРЅРі. РћС‚РїСЂР°РІР»СЏРµС‚ СЃРµСЂРёСЋ РґР°С‚Р°РіСЂР°РјРј РЅР° С†РµР»РµРІРѕР№
+ * Р°РґСЂРµСЃ Р±РµР· РѕР¶РёРґР°РЅРёСЏ РєРІРёС‚Р°РЅС†РёР№.
  *
- * @param Context Не используется.
+ * @param[in] Context РџРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёР№ РєРѕРЅС‚РµРєСЃС‚ (РѕР¶РёРґР°РµС‚СЃСЏ NULL, РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ).
  */
 static void UdpClientThread(PVOID Context) {
-    KS_SOCKET* ClientSock;
-    LARGE_INTEGER Timeout, Tick;
-    char Msg[256] = { 0 };
-    char TimeStr[16] = { 0 };
-    int N;
+	KS_SOCKET* ClientSock;
+	LARGE_INTEGER Timeout, Tick;
+	char Msg[256] = { 0 };
+	char TimeStr[16] = { 0 };
+	int N;
 
-    UNREFERENCED_PARAMETER(Context);
+	UNREFERENCED_PARAMETER(Context);
 
-    /* Задержка 6 сек перед стартом клиента */
-    Timeout.QuadPart = -60000000LL;
-    KeDelayExecutionThread(KernelMode, FALSE, &Timeout);
+	/* Р—Р°РґРµСЂР¶РєР° 6 СЃРµРє РїРµСЂРµРґ СЃС‚Р°СЂС‚РѕРј РєР»РёРµРЅС‚Р° */
+	Timeout.QuadPart = -60000000LL;
+	KeDelayExecutionThread(KernelMode, FALSE, &Timeout);
 
-    KeQueryTickCount(&Tick);
-    N = 3 + ((Tick.LowPart >> 4) % 5);
+	KeQueryTickCount(&Tick);
+	N = 3 + ((Tick.LowPart >> 4) % 5);
 
-    KsLog("UDP-КЛИЕНТ", "Запуск! Стриминг %d датаграмм на %s:%d", N, TARGET_IP, TEST_PORT_UDP);
+	KsLog("UDP-РљР›РР•РќРў", "Р—Р°РїСѓСЃРє! РЎС‚СЂРёРјРёРЅРі %d РґР°С‚Р°РіСЂР°РјРј РЅР° %s:%d", N, TARGET_IP, TEST_PORT_UDP);
 
-    ClientSock = ksSocket(KS_UDP);
-    if (!ClientSock) PsTerminateSystemThread(STATUS_SUCCESS);
+	ClientSock = ksSocket(KS_UDP);
+	if (!ClientSock) PsTerminateSystemThread(STATUS_SUCCESS);
 
-    for (int i = 1; i <= N; i++) {
-        if (g_IsUnloading) break;
+	for (int i = 1; i <= N; i++) {
+		if (g_IsUnloading) break;
 
-        GetTimeStr(TimeStr, sizeof(TimeStr));
-        RtlStringCbPrintfA(Msg, sizeof(Msg), "UDP-DATAGRAM [%d/%d | Time: %s] from Windows", i, N, TimeStr);
+		GetTimeStr(TimeStr, sizeof(TimeStr));
+		RtlStringCbPrintfA(Msg, sizeof(Msg), "UDP-DATAGRAM [%d/%d | Time: %s] from Windows", i, N, TimeStr);
 
-        if (ksSendTo(ClientSock, Msg, (unsigned int)strlen(Msg) + 1, TARGET_IP, TEST_PORT_UDP) > 0) {
-            KsLog("UDP-КЛИЕНТ", "Отправлено [%d/%d]: '%s'", i, N, Msg);
-        }
-        else {
-            KsLog("UDP-ОШИБКА", "Сбой отправки к %s:%d", TARGET_IP, TEST_PORT_UDP);
-        }
+		if (ksSendTo(ClientSock, Msg, (unsigned int)strlen(Msg) + 1, TARGET_IP, TEST_PORT_UDP) > 0) {
+			KsLog("UDP-РљР›РР•РќРў", "РћС‚РїСЂР°РІР»РµРЅРѕ [%d/%d]: '%s'", i, N, Msg);
+		}
+		else {
+			KsLog("UDP-РћРЁРР‘РљРђ", "РЎР±РѕР№ РѕС‚РїСЂР°РІРєРё Рє %s:%d", TARGET_IP, TEST_PORT_UDP);
+		}
 
-        /* Пауза 4 секунды между отправками датаграмм */
-        Timeout.QuadPart = -40000000LL;
-        KeDelayExecutionThread(KernelMode, FALSE, &Timeout);
-    }
+		/* РџР°СѓР·Р° 4 СЃРµРєСѓРЅРґС‹ РјРµР¶РґСѓ РѕС‚РїСЂР°РІРєР°РјРё РґР°С‚Р°РіСЂР°РјРј */
+		Timeout.QuadPart = -40000000LL;
+		KeDelayExecutionThread(KernelMode, FALSE, &Timeout);
+	}
 
-    ksClose(ClientSock);
-    KsLog("UDP-КЛИЕНТ", "Тестирование завершено.");
-    PsTerminateSystemThread(STATUS_SUCCESS);
+	ksClose(ClientSock);
+	KsLog("UDP-РљР›РР•РќРў", "РўРµСЃС‚РёСЂРѕРІР°РЅРёРµ Р·Р°РІРµСЂС€РµРЅРѕ.");
+	PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
 /* =========================================================================
- * Жизненный цикл драйвера
+ * Р–РёР·РЅРµРЅРЅС‹Р№ С†РёРєР» РґСЂР°Р№РІРµСЂР°
  * ========================================================================= */
 
-/**
- * @brief Функция выгрузки драйвера (срабатывает при 'sc stop').
- * @details Реализует безопасное завершение ожидающих потоков через Loopback Wake-up.
- *
- * @param DriverObject Объект драйвера.
- */
 DRIVER_UNLOAD KsDriverUnload;
 
+/**
+ * @brief Р¤СѓРЅРєС†РёСЏ РІС‹РіСЂСѓР·РєРё РґСЂР°Р№РІРµСЂР° (СЃСЂР°Р±Р°С‚С‹РІР°РµС‚ РїСЂРё РєРѕРјР°РЅРґРµ 'sc stop').
+ * 
+ * @details РЈСЃС‚Р°РЅР°РІР»РёРІР°РµС‚ С„Р»Р°Рі `g_IsUnloading` Рё СЂРµР°Р»РёР·СѓРµС‚ Р±РµР·РѕРїР°СЃРЅРѕРµ Р·Р°РІРµСЂС€РµРЅРёРµ 
+ * РѕР¶РёРґР°СЋС‰РёС… РїРѕС‚РѕРєРѕРІ С‡РµСЂРµР· РѕС‚РїСЂР°РІРєСѓ С„РёРєС‚РёРІРЅС‹С… СЃРµС‚РµРІС‹С… РїР°РєРµС‚РѕРІ РЅР° `127.0.0.1` 
+ * (РїР°С‚С‚РµСЂРЅ "Loopback Wake-up"), С‡С‚РѕР±С‹ РїСЂРµСЂРІР°С‚СЊ Р±Р»РѕРєРёСЂСѓСЋС‰РёРµ РІС‹Р·РѕРІС‹.
+ *
+ * @param[in] DriverObject РЈРєР°Р·Р°С‚РµР»СЊ РЅР° РѕР±СЉРµРєС‚ РґСЂР°Р№РІРµСЂР°.
+ */
 void KsDriverUnload(_In_ PDRIVER_OBJECT DriverObject) {
-    KS_SOCKET* WakeSock;
-    LARGE_INTEGER Delay;
-    UNREFERENCED_PARAMETER(DriverObject);
+	KS_SOCKET* WakeSock;
+	LARGE_INTEGER Delay;
+	UNREFERENCED_PARAMETER(DriverObject);
 
-    KsLog("ЯДРО", "===========================================");
-    KsLog("ЯДРО", "Команда 'sc stop' получена. Мягкая выгрузка...");
+	KsLog("РЇР”Р Рћ", "===========================================");
+	KsLog("РЇР”Р Рћ", "РљРѕРјР°РЅРґР° 'sc stop' РїРѕР»СѓС‡РµРЅР°. РњСЏРіРєР°СЏ РІС‹РіСЂСѓР·РєР°...");
 
-    g_IsUnloading = TRUE;
+	g_IsUnloading = TRUE;
 
-    /* Будим TCP-сервер локальным подключением */
-    WakeSock = ksSocket(KS_TCP);
-    if (WakeSock) { ksConnect(WakeSock, "127.0.0.1", TEST_PORT_TCP); ksClose(WakeSock); }
+	/* Р‘СѓРґРёРј TCP-СЃРµСЂРІРµСЂ Р»РѕРєР°Р»СЊРЅС‹Рј РїРѕРґРєР»СЋС‡РµРЅРёРµРј */
+	WakeSock = ksSocket(KS_TCP);
+	if (WakeSock) { ksConnect(WakeSock, "127.0.0.1", TEST_PORT_TCP); ksClose(WakeSock); }
 
-    /* Будим UDP-сервер фиктивной датаграммой */
-    WakeSock = ksSocket(KS_UDP);
-    if (WakeSock) { ksSendTo(WakeSock, "X", 1, "127.0.0.1", TEST_PORT_UDP); ksClose(WakeSock); }
+	/* Р‘СѓРґРёРј UDP-СЃРµСЂРІРµСЂ С„РёРєС‚РёРІРЅРѕР№ РґР°С‚Р°РіСЂР°РјРјРѕР№ */
+	WakeSock = ksSocket(KS_UDP);
+	if (WakeSock) { ksSendTo(WakeSock, "X", 1, "127.0.0.1", TEST_PORT_UDP); ksClose(WakeSock); }
 
-    /* Задержка 0.5 сек для корректного освобождения ресурсов потоками */
-    Delay.QuadPart = -5000000LL;
-    KeDelayExecutionThread(KernelMode, FALSE, &Delay);
+	/* Р—Р°РґРµСЂР¶РєР° 0.5 СЃРµРє РґР»СЏ РєРѕСЂСЂРµРєС‚РЅРѕРіРѕ РѕСЃРІРѕР±РѕР¶РґРµРЅРёСЏ СЂРµСЃСѓСЂСЃРѕРІ РїРѕС‚РѕРєР°РјРё */
+	Delay.QuadPart = -5000000LL;
+	KeDelayExecutionThread(KernelMode, FALSE, &Delay);
 
-    KsWskCleanup();
-    KsLog("ЯДРО", "Драйвер успешно выгружен.");
-    KsLog("ЯДРО", "===========================================\n");
+	KsWskCleanup();
+	KsLog("РЇР”Р Рћ", "Р”СЂР°Р№РІРµСЂ СѓСЃРїРµС€РЅРѕ РІС‹РіСЂСѓР¶РµРЅ.");
+	KsLog("РЇР”Р Рћ", "===========================================\n");
 }
 
-/**
- * @brief Точка входа драйвера (срабатывает при 'sc start').
- *
- * @param DriverObject Объект драйвера.
- * @param RegistryPath Путь в реестре (не используется).
- * @return NTSTATUS STATUS_SUCCESS или код ошибки инициализации WSK.
- */
 DRIVER_INITIALIZE DriverEntry;
 
+/**
+ * @brief РўРѕС‡РєР° РІС…РѕРґР° РґСЂР°Р№РІРµСЂР° (СЃСЂР°Р±Р°С‚С‹РІР°РµС‚ РїСЂРё Р·Р°РіСЂСѓР·РєРµ 'sc start').
+ * 
+ * @details РРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ РїРѕРґСЃРёСЃС‚РµРјСѓ WSK Рё Р·Р°РїСѓСЃРєР°РµС‚ СЃРёСЃС‚РµРјРЅС‹Рµ РїРѕС‚РѕРєРё (kthreads) 
+ * РґР»СЏ С‚РµСЃС‚РёСЂРѕРІР°РЅРёСЏ API.
+ *
+ * @param[in] DriverObject РЈРєР°Р·Р°С‚РµР»СЊ РЅР° РѕР±СЉРµРєС‚ РґСЂР°Р№РІРµСЂР°.
+ * @param[in] RegistryPath РџСѓС‚СЊ РІ СЂРµРµСЃС‚СЂРµ (РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ).
+ * 
+ * @return `STATUS_SUCCESS` РїСЂРё СѓСЃРїРµС…Рµ, РёРЅР°С‡Рµ РєРѕРґ РѕС€РёР±РєРё РёРЅРёС†РёР°Р»РёР·Р°С†РёРё WSK.
+ */
 NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING RegistryPath) {
-    NTSTATUS Status;
-    HANDLE h1, h2, h3, h4;
+	NTSTATUS Status;
+	HANDLE h1, h2, h3, h4;
 
-    UNREFERENCED_PARAMETER(RegistryPath);
+	UNREFERENCED_PARAMETER(RegistryPath);
 
-    DriverObject->DriverUnload = KsDriverUnload;
+	DriverObject->DriverUnload = KsDriverUnload;
 
-    KsLog("ЯДРО", "===========================================");
-    KsLog("ЯДРО", "Загрузка драйвера KernelSocket...");
+	KsLog("РЇР”Р Рћ", "===========================================");
+	KsLog("РЇР”Р Рћ", "Р—Р°РіСЂСѓР·РєР° РґСЂР°Р№РІРµСЂР° KernelSocket...");
 
-    Status = KsWskInit();
-    if (!NT_SUCCESS(Status)) {
-        KsLog("ОШИБКА", "Сбой KsWskInit: 0x%08X", Status);
-        return Status;
-    }
+	Status = KsWskInit();
+	if (!NT_SUCCESS(Status)) {
+		KsLog("РћРЁРР‘РљРђ", "РЎР±РѕР№ KsWskInit: 0x%08X", Status);
+		return Status;
+	}
 
-    /* 1. Запуск серверных потоков */
-    // if (NT_SUCCESS(PsCreateSystemThread(&h1, THREAD_ALL_ACCESS, NULL, NULL, NULL, TcpServerThread, NULL))) ZwClose(h1);
-    // if (NT_SUCCESS(PsCreateSystemThread(&h3, THREAD_ALL_ACCESS, NULL, NULL, NULL, UdpServerThread, NULL))) ZwClose(h3);
+	/* 1. Р—Р°РїСѓСЃРє СЃРµСЂРІРµСЂРЅС‹С… РїРѕС‚РѕРєРѕРІ */
+	if (NT_SUCCESS(PsCreateSystemThread(&h1, THREAD_ALL_ACCESS, NULL, NULL, NULL, TcpServerThread, NULL))) ZwClose(h1);
+	if (NT_SUCCESS(PsCreateSystemThread(&h3, THREAD_ALL_ACCESS, NULL, NULL, NULL, UdpServerThread, NULL))) ZwClose(h3);
 
-    /*
-     * [НАСТРОЙКА: СЕТЕВЫЕ КЛИЕНТЫ]
-     * Если вы тестируете взаимодействие по локальной сети и хотите,
-     * чтобы этот драйвер работал ТОЛЬКО как сервер, закомментируйте
-     * следующие 2 строки (создание клиентов).
-     */
-    if (NT_SUCCESS(PsCreateSystemThread(&h2, THREAD_ALL_ACCESS, NULL, NULL, NULL, TcpClientThread, NULL))) ZwClose(h2);
-    if (NT_SUCCESS(PsCreateSystemThread(&h4, THREAD_ALL_ACCESS, NULL, NULL, NULL, UdpClientThread, NULL))) ZwClose(h4);
+	/*
+	 * [РќРђРЎРўР РћР™РљРђ: РЎР•РўР•Р’Р«Р• РљР›РР•РќРўР«]
+	 * Р•СЃР»Рё РІС‹ С‚РµСЃС‚РёСЂСѓРµС‚Рµ РІР·Р°РёРјРѕРґРµР№СЃС‚РІРёРµ РїРѕ Р»РѕРєР°Р»СЊРЅРѕР№ СЃРµС‚Рё Рё С…РѕС‚РёС‚Рµ,
+	 * С‡С‚РѕР±С‹ СЌС‚РѕС‚ РґСЂР°Р№РІРµСЂ СЂР°Р±РѕС‚Р°Р» РўРћР›Р¬РљРћ РєР°Рє СЃРµСЂРІРµСЂ, Р·Р°РєРѕРјРјРµРЅС‚РёСЂСѓР№С‚Рµ
+	 * СЃР»РµРґСѓСЋС‰РёРµ 2 СЃС‚СЂРѕРєРё (СЃРѕР·РґР°РЅРёРµ РєР»РёРµРЅС‚РѕРІ).
+	 */
+	if (NT_SUCCESS(PsCreateSystemThread(&h2, THREAD_ALL_ACCESS, NULL, NULL, NULL, TcpClientThread, NULL))) ZwClose(h2);
+	if (NT_SUCCESS(PsCreateSystemThread(&h4, THREAD_ALL_ACCESS, NULL, NULL, NULL, UdpClientThread, NULL))) ZwClose(h4);
 
-    KsLog("ЯДРО", "Все тестовые потоки успешно инициированы.");
-    KsLog("ЯДРО", "===========================================");
-    return STATUS_SUCCESS;
+	KsLog("РЇР”Р Рћ", "Р’СЃРµ С‚РµСЃС‚РѕРІС‹Рµ РїРѕС‚РѕРєРё СѓСЃРїРµС€РЅРѕ РёРЅРёС†РёРёСЂРѕРІР°РЅС‹.");
+	KsLog("РЇР”Р Рћ", "===========================================");
+	return STATUS_SUCCESS;
 }
