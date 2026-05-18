@@ -1,0 +1,29 @@
+PROJECT_NAME           = "KernelSocket"
+PROJECT_BRIEF          = "Кроссплатформенный API для TCP/UDP в режиме ядра"
+
+OUTPUT_DIRECTORY       = .
+OUTPUT_LANGUAGE        = Russian
+OPTIMIZE_OUTPUT_FOR_C  = YES
+
+INPUT                  = ../include ../src ../test ../README.md
+RECURSIVE              = YES
+USE_MDFILE_AS_MAINPAGE = ../README.md
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+
+GENERATE_HTML          = YES
+GENERATE_TREEVIEW      = YES
+GENERATE_LATEX         = NO
+
+HTML_EXTRA_STYLESHEET  = "doxygen-awesome-css/doxygen-awesome.css"
+
+DISABLE_INDEX          = YES
+FULL_SIDEBAR           = NO
+HTML_COLORSTYLE_HUE    = 209
+HTML_COLORSTYLE_SAT    = 255
+HTML_COLORSTYLE_GAMMA  = 113
+
+LAYOUT_FILE = DoxygenLayout.xml
+SEARCHENGINE = NO
